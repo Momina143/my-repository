@@ -7,8 +7,11 @@ def head():
     return render_template("index.html", number1=10, number2=20)
 
 @app.route("/<string:num1>/<string:num2>")
-def nums(num1, num2):
-    return render_template("index.html", number1=num1, number2=num2)
+def numbers(num1, num2):
+    if num1.isdigit() and num2.isdigit():
+        return render_template("index.html", number1=num1, number2=num2)
+    else:
+        return "<h1>You did not input numbers.</h1>"
 
 @app.route("/sum/<string:first>/<string:second>")
 def sum(first, second):
@@ -18,10 +21,9 @@ def sum(first, second):
         numsum = num1 + num2
         return render_template("body.html", value1=num1, value2=num2, sum=numsum)
     else:
-        return "bad URL"
+        return "Poorly formatted URL"
 
 
-
-if __name__== "__main__":
+if __name__ == "__main__":
     app.run(debug=True, port=5000)
     # app.run(host= '0.0.0.0', port=8081)
