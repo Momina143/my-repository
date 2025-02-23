@@ -3,7 +3,7 @@ from flask import Flask, render_template, request
 app = Flask(__name__)
 
 # define global parameters and variables
-DEVELOPER_NAME = "Altaz"
+DEVELOPER_NAME = "Momina"
 
 # define environment
 ENVIRONMENT = "AWS"
