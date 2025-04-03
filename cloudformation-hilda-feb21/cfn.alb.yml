@@ -1,0 +1,185 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: |
+  This template launches an autoscaling group and an application load balancer
+Parameters:
+  myVPC:
+    Type: AWS::EC2::VPC::Id
+    Description: Please select a VPC
+
+  mySubnets:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Please select 2 or more subnets in different availability zones
+
+  myEnvParam:
+    Description: Choose your env type
+    Type: String
+    Default: prod
+    AllowedValues:
+      - prod
+      - test
+
+  myKeyPair:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Select KeyPair
+
+  myInstanceType:
+    Type: String
+    Description: Select instance type
+    Default: t2.micro
+    AllowedValues:
+      - t2.micro
+      - t2.nano
+      - t3.micro
+      - t4g.micro
+    
+
+Mappings:
+  myRegionImageMap:
+    us-east-1:
+      prod: ami-079db87dc4c10ac91
+      test: ami-098143f68772b34f5
+    us-east-2:
+      prod: ami-0ee4f2271a4df2d7d
+      test: ami-0dbb0f9887f1fe98f
+    us-west-1:
+      prod: ami-0082110c417e4726e
+      test: ami-04669a22aad391419
+  
+Resources:
+  # security group
+  mySecGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Open SSH and HTTP ports" # Required
+      SecurityGroupIngress: 
+        - CidrIp: "0.0.0.0/0"
+          FromPort: 22
+          IpProtocol: "tcp"
+          ToPort: 22
+        - CidrIp: "0.0.0.0/0"
+          FromPort: 80
+          IpProtocol: "tcp"
+          ToPort: 80
+      Tags: 
+        - Key: "Name"
+          Value: "mySecGroup"
+      VpcId: !Ref myVPC
+  # alb
+  # - loadbalancer
+  myALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: "myALB"
+      SecurityGroups: 
+        - !Ref mySecGroup
+      Subnets: !Ref mySubnets
+      Tags: 
+        - Key: "Name"
+          Value: "myALB"
+      Type: "application"
+  # - listeners
+  myListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions: # Required
+        - TargetGroupArn: !GetAtt myTargetGroup.TargetGroupArn
+          Type: "forward"
+      LoadBalancerArn: !GetAtt myALB.LoadBalancerArn # Required
+      Port: 80
+      Protocol: "HTTP"
+  # - target groups
+  myTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: /
+      HealthCheckPort: "80"
+      HealthCheckProtocol: "HTTP"
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 3
+      Name: "myTargertGroup"
+      Port: "80"
+      Protocol: "HTTP"
+      UnhealthyThresholdCount: 2
+      VpcId: !Ref myVPC
+
+  # auto-scaling group
+  # - group
+  myASG:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: "myASG"
+      DesiredCapacity: "1"
+      HealthCheckGracePeriod: 300
+      HealthCheckType: "ELB"
+      LaunchTemplate:
+        LaunchTemplateId: !Ref myLaunchTemplate
+        Version: !GetAtt myLaunchTemplate.DefaultVersionNumber
+      MaxSize: "3" # Required
+      MinSize: "1" # Required
+      TargetGroupARNs: 
+        - !GetAtt myTargetGroup.TargetGroupArn
+      VPCZoneIdentifier: !Ref mySubnets
+  # - scaling options
+  myScalingPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref myASG # Required
+      PolicyType: TargetTrackingScaling
+      TargetTrackingConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: "ASGAverageCPUUtilization"
+        TargetValue: 60
+  # - Launch Template
+  myLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateData:
+        ImageId: !FindInMap 
+          - myRegionImageMap
+          - !Ref "AWS::Region"
+          - !Ref myEnvParam
+        InstanceType: !Ref myInstanceType
+        KeyName: !Ref myKeyPair
+        SecurityGroupIds:
+          - !GetAtt mySecGroup.GroupId # !Ref mySecGrp
+        UserData: !Base64 |
+          #!/bin/bash
+          #update os
+          dnf update -y
+          #install apache server
+          dnf install -y httpd
+          # get private ip address of ec2 instance using instance metadata
+          TOKEN=`curl -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600"` \
+          && PRIVATE_IP=`curl -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4`
+          # get public ip address of ec2 instance using instance metadata
+          TOKEN=`curl -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600"` \
+          && PUBLIC_IP=`curl -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/public-ipv4` 
+          # get date and time of server
+          DATE_TIME=`date`
+          # set all permissions
+          chmod -R 777 /var/www/html
+          # create a custom index.html file
+          echo "<html>
+              <head>
+              <title> Application Load Balancer</title>
+              </head>
+              <body>
+                  <h1>Testing Application Load Balancer</h1>
+                  <h2>Congratulations! You have created an instance from Launch Template</h2>
+                  <h3>This web server is launched from the launch template by Osvaldo via CFN</h3>
+                  <p>This instance is created at <b>$DATE_TIME</b></p>
+                  <p>Private IP address of this instance is <b>$PRIVATE_IP</b></p>
+                  <p>Public IP address of this instance is <b>$PUBLIC_IP</b></p>
+              </body>
+              </html>" > /var/www/html/index.html
+          # start apache server
+          systemctl start httpd
+          systemctl enable httpd
+      LaunchTemplateName: myTemplate
+Outputs:
+  DNSofALB:
+    Value: !Join
+    - ''
+    - - "http://"
+      - !GetAtt myALB.DNSName
